@@ -71,63 +71,22 @@ Practical examples and configurations are available to help you get started:
 
 ## Configuration
 
-l8e-harbor uses a simple YAML configuration file. Example configurations are available in the [`examples/`](examples/) directory:
-
-- **[`examples/config.yaml`](examples/config.yaml)** - Minimal development configuration with HTTP and local file storage
-- **[`examples/mcp-route.yaml`](examples/mcp-route.yaml)** - Complete route definition with middleware and health checks  
-- **[`examples/routes-backup.yaml`](examples/routes-backup.yaml)** - Route export/backup format example
-
-### Basic Configuration
+l8e-harbor uses YAML configuration files with pluggable backends:
 
 ```yaml
-# examples/config.yaml - Minimal l8e-harbor configuration for testing
-mode: vm
-server:
-  host: 0.0.0.0
-  port: 8443
-
-# TLS - use HTTP for testing
-tls:
-  enabled: false
-
-# Use local file-based providers for testing
-secret_provider: localfs
-secret_path: ./data/secrets
-route_store: memory
-route_store_path: ./data/routes
-auth_adapter: local
-
-# Logging
-log_level: INFO
-enable_metrics: false
-enable_tracing: false
-
-# Default routes for testing
-routes: []
-```
-
-### Production Configuration
-
-```yaml
-# /etc/l8e-harbor/config.yaml - Production configuration
+# Basic configuration
 mode: vm  # or k8s, hybrid
 server:
   host: 0.0.0.0
   port: 8443
 tls:
   enabled: true
-  cert_file: /etc/l8e-harbor/tls/tls.crt
-  key_file: /etc/l8e-harbor/tls/tls.key
 secret_provider: localfs  # or kubernetes, vault, aws, gcp
-secret_path: /etc/l8e-harbor/secrets
-route_store: sqlite  # or memory, configmap, crd
-auth_adapter: local  # or k8s_sa, oidc, opaque
-log_level: INFO
-enable_metrics: true
-enable_tracing: true
+route_store: sqlite      # or memory, configmap, crd
+auth_adapter: local      # or k8s_sa, oidc, opaque
 ```
 
-Configuration precedence: CLI flags → Environment variables → Config file → Defaults
+> 📖 **Complete configuration guide**: [`CONFIGURATION.md`](CONFIGURATION.md)
 
 ## Admin Account Management
 
@@ -153,161 +112,73 @@ sudo cat /etc/l8e-harbor/secrets/admin-credentials.json
 
 ## Managing Routes
 
-### Using harbor-ctl CLI
+### CLI Management
 
 ```bash
-# Login
+# Login and manage routes
 harbor-ctl login --username admin
-
-# Create a route (see examples/mcp-route.yaml for complete example)
 harbor-ctl apply -f examples/mcp-route.yaml
-
-# List routes
 harbor-ctl get routes
-
-# Export all routes
-harbor-ctl export routes -o backup.yaml
 ```
 
-### Using Management API
+### API Management
 
 ```bash
-# Get JWT token (use actual admin password from credentials file)
-curl -k -X POST https://localhost:18443/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"[ADMIN_PASSWORD_FROM_BOOTSTRAP]"}'
-
-# Create route
-curl -k -X PUT https://localhost:18443/api/v1/routes/my-route \
+# Authenticate and create routes via REST API
+curl -X POST https://localhost:18443/api/v1/auth/login \
+  -d '{"username":"admin","password":"[PASSWORD]"}'
+  
+curl -X PUT https://localhost:18443/api/v1/routes/my-route \
   -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "path": "/api/v1",
-    "backends": [{"url": "http://backend:8080"}],
-    "middleware": [{"name": "logging"}]
-  }'
+  -d '{"path":"/api","backends":[{"url":"http://backend:8080"}]}'
 ```
 
 ## Route Configuration
 
-Routes support extensive configuration options:
+Routes support advanced features like load balancing, circuit breakers, and middleware:
 
 ```yaml
 spec:
   id: advanced-route
-  description: "Advanced API route with all features"
   path: /api/v2
-  methods: ["GET", "POST", "PUT", "DELETE"]
   backends:
     - url: http://primary-backend:8080
       weight: 100
       health_check_path: /healthz
-    - url: http://secondary-backend:8080
-      weight: 50
-  priority: 10
-  timeout_ms: 5000
   retry_policy:
     max_retries: 2
     backoff_ms: 200
-    retry_on: ["5xx", "timeout"]
   circuit_breaker:
     enabled: true
     failure_threshold: 50
-    minimum_requests: 20
   middleware:
     - name: auth
       config:
         require_role: ["captain"]
-    - name: header-rewrite
-      config:
-        set:
-          X-Service: "my-service"
-        remove: ["X-Debug"]
-  matchers:
-    - name: header
-      value: "X-Version"
-      op: "equals"
+    - name: cors
 ```
 
 ## Security
 
-### Authentication & Authorization
+**Multi-layered security architecture:**
+- **Authentication**: Local users, Kubernetes ServiceAccounts, OAuth2/OIDC
+- **Authorization**: Role-based access control (RBAC)
+- **Transport**: TLS required for production
+- **Secrets**: Pluggable secret management (filesystem, K8s, Vault, cloud)
+- **Audit**: Comprehensive activity logging
 
-l8e-harbor supports multiple authentication methods:
-
-1. **Local Users** (VM/development):
-   - Username/password with bcrypt hashing
-   - JWT tokens with RSA256 signing
-   - Role-based access control
-
-2. **Kubernetes ServiceAccounts**:
-   - Native K8s token validation
-   - Automatic role mapping
-   - RBAC integration
-
-3. **OAuth2/OIDC** (optional):
-   - External identity providers
-   - Claims-based role mapping
-
-### TLS & Transport Security
-
-- TLS required for Management API in production
-- Support for custom certificates or auto-generated
-- cert-manager integration in Kubernetes
-
-### Secrets Management
-
-Sensitive data is stored securely:
-- JWT signing keys
-- User credentials (bcrypt hashed)
-- TLS certificates
-- Backend credentials (future)
+> 🔒 **Complete security guide**: [`SECURITY.md`](SECURITY.md)
 
 ## Observability
 
-### Metrics
+**Enterprise-grade monitoring and tracing:**
+- **Metrics**: Prometheus-compatible metrics with request rate, latency, errors
+- **Logging**: Structured JSON logs with request tracing
+- **Tracing**: OpenTelemetry distributed tracing support
+- **Health Checks**: Service and backend health monitoring
+- **Dashboards**: Pre-built Grafana dashboards and alerts
 
-Prometheus metrics exposed on `/metrics`:
-
-```
-# Request metrics
-l8e_proxy_requests_total{route_id,method,status_code,backend}
-l8e_proxy_request_duration_seconds{route_id,backend}
-
-# System metrics
-l8e_routes_total
-l8e_backend_up{backend,route_id}
-l8e_circuit_breaker_state{backend,route_id}
-l8e_auth_attempts_total{adapter_type,status}
-```
-
-### Structured Logging
-
-JSON structured logs with request tracing:
-
-```json
-{
-  "timestamp": "2024-08-31T10:30:00Z",
-  "level": "INFO",
-  "message": "Request completed",
-  "request_id": "req_123",
-  "method": "GET",
-  "path": "/api/v1/data",
-  "status_code": 200,
-  "duration_ms": 45.2,
-  "route_id": "api-route",
-  "backend": "http://service:8080",
-  "user": "alice"
-}
-```
-
-### Distributed Tracing
-
-OpenTelemetry support with:
-- FastAPI auto-instrumentation
-- Custom spans for routing logic
-- Backend call tracing
-- Jaeger integration
+> 📊 **Complete observability guide**: [`OBSERVABILITY.md`](OBSERVABILITY.md)
 
 ## Architecture
 
@@ -333,57 +204,32 @@ OpenTelemetry support with:
 
 ## Development
 
-### Prerequisites
-
-- Python 3.9+
-- Poetry for dependency management
-- Docker (optional)
-- Kubernetes cluster (for K8s features)
-
-### Setup
+**Quick development setup:**
 
 ```bash
-# Clone and setup
+# Setup development environment
 git clone https://github.com/example/l8e-harbor.git
 cd l8e-harbor
-
-# Install dependencies
 poetry install
 
-# Run tests
-poetry run pytest
-
-# Run locally
+# Run with auto-reload
 poetry run python -m app.main --reload
-```
 
-### Running Tests
-
-```bash
-# Unit tests
-poetry run pytest tests/
-
-# Integration tests (requires Docker)
-docker-compose -f deployments/docker/docker-compose.yaml up -d
-poetry run pytest tests/integration/
-
-# Linting and type checking
+# Run tests and quality checks
+poetry run pytest
 poetry run ruff check app/
-poetry run mypy app/
-poetry run bandit -r app/
 ```
 
-### harbor-ctl CLI
+> 🛠️ **Complete development guide**: [`DEVELOPMENT.md`](DEVELOPMENT.md)
 
-The `harbor-ctl` command-line interface provides convenient management capabilities:
+### CLI Tool
+
+The `harbor-ctl` CLI provides convenient management:
 
 ```bash
-# Install and use
+# Install and basic usage
 poetry install
-poetry run harbor-ctl --help
-
-# Basic operations
-harbor-ctl login --server https://localhost:8443 --username admin
+harbor-ctl login --server https://localhost:8443
 harbor-ctl get routes
 harbor-ctl apply -f examples/mcp-route.yaml
 ```
@@ -415,9 +261,14 @@ Apache License 2.0 - see [LICENSE](LICENSE) for details.
 
 ## Documentation
 
-- **Examples & Tutorials**: [`examples/README.md`](examples/README.md)
-- **Deployment Guides**: [`deployments/README.md`](deployments/README.md)  
-- **API Documentation**: [docs/](docs/)
+| Topic | Link |
+|-------|------|
+| **Examples & Tutorials** | [`examples/README.md`](examples/README.md) |
+| **Deployment Guides** | [`deployments/README.md`](deployments/README.md) |
+| **Configuration** | [`CONFIGURATION.md`](CONFIGURATION.md) |
+| **Security** | [`SECURITY.md`](SECURITY.md) |
+| **Monitoring** | [`OBSERVABILITY.md`](OBSERVABILITY.md) |
+| **Development** | [`DEVELOPMENT.md`](DEVELOPMENT.md) |
 
 ## Support
 
