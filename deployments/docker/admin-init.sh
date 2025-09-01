@@ -176,7 +176,10 @@ echo "Web UI: $UI_BASE_URL"
 echo "API URL: $API_BASE_URL"
 echo ""
 echo "To view credentials:"
-echo "  docker-compose exec l8e-harbor-api cat /app/shared/admin-credentials.json"
+echo "  # Find container ID: docker ps -a"
+echo "  # Exec into container: docker exec -it -u root <API_CONTAINER_ID> sh"
+echo "  # View credentials: cd shared && cat admin-credentials.json"
+echo "  OR docker-compose exec l8e-harbor-api cat /app/shared/admin-credentials.json"
 echo ""
 echo "To login via CLI:"
 echo "  harbor-ctl login --server=$API_BASE_URL --username=$ADMIN_USERNAME"
@@ -198,7 +201,10 @@ Credentials File: $ADMIN_CREDS_FILE
 JWT Keys Directory: $JWT_KEYS_DIR
 
 To view full credentials:
-  docker-compose exec l8e-harbor-api cat /app/shared/admin-credentials.json
+  # Find container ID: docker ps -a
+  # Exec into container: docker exec -it -u root <API_CONTAINER_ID> sh
+  # View credentials: cd shared && cat admin-credentials.json
+  OR: docker-compose exec l8e-harbor-api cat /app/shared/admin-credentials.json
 
 To login:
   1. Web UI: Open $UI_BASE_URL
