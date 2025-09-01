@@ -2,18 +2,82 @@
 
 **Open, Pluggable, Deployment-Agnostic AI Gateway**
 
-l8e-harbor is a secure, high-performance AI gateway designed to run anywhere - from Kubernetes clusters to bare metal VMs. It provides pluggable authentication, flexible routing, and comprehensive observability for AI services.
+l8e-harbor is a secure, high-performance AI gateway designed to run anywhere. It acts as a smart, unified front door for all your AI services, giving you centralized control over authentication, routing, security, and observability.
 
-## Features
+## What is l8e-harbor?
 
-### Core Capabilities
+Managing access to multiple AI models and services (like OpenAI, Anthropic, Cohere, or custom-built tools) can be complex. Each has different authentication methods, logging formats, and security requirements.
+
+l8e-harbor solves this by providing a single, consistent entry point. Think of it as an airport control tower for your AI traffic: it inspects incoming requests, ensures they are authorized, applies rules and transformations, and then directs them safely to the correct backend service.
+
+This centralizes complex logic, simplifies your client applications, and gives you a powerful control plane for all your AI operations.
+
+## How It Works: The Core Concepts
+
+l8e-harbor's behavior is defined by a few key concepts:
+
+### 1. Routes: The Heart of the Gateway
+
+A **Route** is the fundamental rule that tells l8e-harbor how to handle an incoming request. It maps a public-facing path to a private, backend AI service.
+
+Each route defines:
+- **Path**: The public URL path your users will request (e.g., `/mcp/jira/search`)
+- **Target**: The internal address of the backend service to which the request should be forwarded (e.g., `http://jira-mcp-service:8080`)
+- **Middleware**: A chain of actions to execute before the request is forwarded
+
+### 2. Middleware: The Brains of the Operation
+
+**Middleware** are plugins that inspect and modify requests as they pass through the gateway. This is where l8e-harbor's power lies. You can chain middleware together to:
+- **Authenticate**: Verify JWTs, API keys, or handle complex OAuth 2.0 flows
+- **Rate Limit**: Protect your backend services from abuse
+- **Log & Audit**: Create a detailed, consistent log of all AI requests
+- **Add Retries & Circuit Breakers**: Improve the reliability of your system
+
+### 3. Pluggable Backends: Ultimate Flexibility
+
+l8e-harbor is designed to be deployment-agnostic. You can swap out its core components to fit your exact infrastructure needs for authentication, secret management, and route storage.
+
+## A Concrete Example: Route Configuration
+
+Here's a simple YAML configuration to illustrate how a route works:
+
+```yaml
+# l8e-harbor-config.yaml
+routes:
+  # ROUTE 1: A simple proxy to a generic language model
+  - path: "/v1/chat/generic"
+    target: "https://api.openserver.ai/v1/chat"
+    middleware:
+      # Middleware 1: Check for a valid API Key in the header
+      - name: "authentication"
+        config:
+          provider: "preshared-token"
+      # Middleware 2: Log the request details
+      - name: "audit-log"
+
+  # ROUTE 2: A protected route for a Jira MCP tool
+  - path: "/mcp/jira"
+    target: "http://my-jira-mcp-container:8080"
+    middleware:
+      # This middleware handles the entire OAuth 2.0 flow for Jira.
+      # The end-user doesn't need to manage tokens; the gateway does it for them.
+      - name: "oauth2"
+        config:
+          provider: "atlassian-jira"
+          clientId: "{{secret:jira_client_id}}"      # Securely load secrets
+          clientSecret: "{{secret:jira_client_secret}}"
+          scopes: ["read:jira-work", "manage:jira-project"]
+```
+
+## Key Features
+
 - **Universal Deployment**: Runs on Kubernetes or VMs with the same binary
 - **Pluggable Architecture**: Swap authentication, secrets, and storage backends
-- **Advanced Routing**: Path-based routing with middleware, retries, and circuit breakers
+- **Advanced Routing**: Path-based routing with a powerful middleware system
 - **Security First**: JWT-based auth, TLS required, least-privilege design
 - **Production Ready**: Metrics, tracing, health checks, and audit logging
 
-### Supported Backends
+## Supported Backends
 
 **Authentication:**
 - Local users with JWT tokens (VM/dev)
@@ -36,36 +100,64 @@ l8e-harbor is a secure, high-performance AI gateway designed to run anywhere - f
 
 ## Quick Start
 
-Choose your deployment method:
-
-| Method | Use Case | Setup Time |
-|--------|----------|------------|
-| [Docker Compose](deployments/#docker-compose) | Development, Testing | 2 minutes |
-| [Kubernetes + Helm](deployments/#kubernetes-helm) | Production, Staging | 5 minutes |
-| [VM/Systemd](deployments/#vmsystemd) | Legacy systems, Bare metal | 10 minutes |
-
-### Quick Deploy with Docker Compose
+### Option 1: Docker Compose (Development)
 
 ```bash
-# Clone and start
-git clone https://github.com/example/l8e-harbor.git
-cd l8e-harbor/deployments/docker
+# Clone repository and navigate into it
+git clone https://github.com/l8eAI/l8e_harbor.git
+cd l8e_harbor
+
+# Start with Docker Compose (includes automatic admin setup)
+cd deployments/docker
 docker-compose -f docker-compose.full.yml up -d
 
-# Get admin credentials and test
+# Wait for admin initialization to complete and get credentials
 docker-compose -f docker-compose.full.yml logs admin-init
+docker exec -u root $(docker-compose -f docker-compose.full.yml ps -q l8e-harbor-api) cat /app/shared/admin-credentials.json
+
+# Test the gateway
 curl http://localhost:18443/health
+```
+
+### Option 2: Kubernetes with Helm
+
+```bash
+# Install with Helm
+helm install l8e-harbor ./deployments/helm \
+  --set config.mode=k8s \
+  --set config.secretProvider=kubernetes \
+  --set config.routeStore=configmap
+
+# Port forward to test
+kubectl port-forward svc/l8e-harbor 8443:443
+curl https://localhost:8443/health --insecure
+```
+
+### Option 3: VM/Systemd Installation
+
+```bash
+# Install on VM
+sudo ./deployments/systemd/install.sh
+
+# Start service
+sudo systemctl start l8e-harbor
+
+# Test
+curl http://localhost:8443/health
 ```
 
 > 📖 **For complete deployment options and production setup**: [`deployments/README.md`](deployments/README.md)
 
-## Examples
+## Example In Action: Calculator MCP Service
 
-Practical examples and configurations are available to help you get started:
+To see l8e-harbor in a real-world scenario, check out our example of proxying a Model Context Protocol (MCP) service with comprehensive logging, metrics, and reliability features.
 
-- **Calculator MCP Service**: Complete production example with observability
-- **Configuration Templates**: Ready-to-use YAML configurations  
-- **Route Definitions**: Advanced routing examples with middleware
+> 📁 **Complete example available in [`examples/calculator-mcp/`](examples/calculator-mcp/)**
+
+This example demonstrates:
+- A **production-ready MCP Service**
+- An **advanced l8e-harbor config** with circuit breakers, rate limiting, and retries
+- A **full observability stack** with logs and Prometheus metrics
 
 > 📁 **Explore all examples**: [`examples/README.md`](examples/README.md)
 
