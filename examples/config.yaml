@@ -1,0 +1,24 @@
+# Minimal l8e-harbor configuration for testing
+mode: vm
+server:
+  host: 0.0.0.0
+  port: 8443
+
+# TLS - use HTTP for testing
+tls:
+  enabled: false
+
+# Use local file-based providers for testing
+secret_provider: localfs
+secret_path: ./data/secrets
+route_store: memory
+route_store_path: ./data/routes
+auth_adapter: local
+
+# Logging
+log_level: INFO
+enable_metrics: false
+enable_tracing: false
+
+# Default routes for testing
+routes: []

@@ -1,0 +1,164 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: l8e-harbor-admin-setup
+  namespace: {{ .Values.namespace | default "l8e-harbor" }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "1"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  template:
+    metadata:
+      name: l8e-harbor-admin-setup
+    spec:
+      restartPolicy: Never
+      serviceAccountName: l8e-harbor-admin-setup
+      initContainers:
+      - name: wait-for-api
+        image: curlimages/curl:latest
+        command:
+        - /bin/sh
+        - -c
+        - |
+          echo "Waiting for l8e-harbor API to be ready..."
+          until curl -k -f {{ include "l8e-harbor.apiUrl" . }}/health; do
+            echo "API not ready, waiting 5 seconds..."
+            sleep 5
+          done
+          echo "API is ready!"
+      containers:
+      - name: admin-setup
+        image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        command:
+        - /bin/sh
+        - -c
+        - |
+          set -e
+          
+          echo "Starting l8e-harbor admin setup..."
+          
+          # Generate secure admin password
+          ADMIN_PASSWORD=$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-25)
+          
+          # Generate JWT signing key
+          JWT_PRIVATE_KEY=$(openssl genpkey -algorithm RSA -pkcs8 -out - 2>/dev/null | base64 -w 0)
+          JWT_PUBLIC_KEY=$(echo "$JWT_PRIVATE_KEY" | base64 -d | openssl pkey -pubout 2>/dev/null | base64 -w 0)
+          
+          # Create admin user using the API
+          echo "Creating admin user..."
+          
+          # First, configure the service with our JWT keys
+          kubectl create secret generic l8e-harbor-jwt-keys \
+            --from-literal=private-key="$JWT_PRIVATE_KEY" \
+            --from-literal=public-key="$JWT_PUBLIC_KEY" \
+            --namespace={{ .Values.namespace | default "l8e-harbor" }} \
+            --dry-run=client -o yaml | kubectl apply -f -
+          
+          # Wait for service restart with new keys
+          kubectl rollout restart deployment/l8e-harbor-api -n {{ .Values.namespace | default "l8e-harbor" }}
+          kubectl rollout status deployment/l8e-harbor-api -n {{ .Values.namespace | default "l8e-harbor" }} --timeout=120s
+          
+          # Create admin user via direct API call with service account token
+          SA_TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+          
+          curl -k -X POST {{ include "l8e-harbor.apiUrl" . }}/api/v1/users \
+            -H "Authorization: Bearer $SA_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"username\": \"admin\",
+              \"password\": \"$ADMIN_PASSWORD\",
+              \"role\": \"harbor-master\",
+              \"meta\": {
+                \"created_by\": \"k8s-init-job\",
+                \"created_at\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"
+              }
+            }" || echo "Admin user may already exist"
+          
+          # Store admin credentials in secret
+          kubectl create secret generic l8e-harbor-admin-creds \
+            --from-literal=username=admin \
+            --from-literal=password="$ADMIN_PASSWORD" \
+            --from-literal=api-url="{{ include "l8e-harbor.apiUrl" . }}" \
+            --from-literal=ui-url="{{ include "l8e-harbor.uiUrl" . }}" \
+            --namespace={{ .Values.namespace | default "l8e-harbor" }} \
+            --dry-run=client -o yaml | kubectl apply -f -
+          
+          # Validate admin access
+          echo "Validating admin access..."
+          LOGIN_RESPONSE=$(curl -k -s -X POST {{ include "l8e-harbor.apiUrl" . }}/api/v1/auth/login \
+            -H "Content-Type: application/json" \
+            -d "{\"username\": \"admin\", \"password\": \"$ADMIN_PASSWORD\"}")
+          
+          if echo "$LOGIN_RESPONSE" | grep -q "access_token"; then
+            echo "✓ Admin user created successfully"
+            echo "✓ Credentials stored in secret: l8e-harbor-admin-creds"
+            echo ""
+            echo "To retrieve admin credentials:"
+            echo "kubectl get secret l8e-harbor-admin-creds -n {{ .Values.namespace | default "l8e-harbor" }} -o jsonpath='{.data.password}' | base64 -d"
+            echo ""
+            echo "Admin login URL: {{ include "l8e-harbor.uiUrl" . }}"
+          else
+            echo "✗ Failed to validate admin access"
+            echo "Response: $LOGIN_RESPONSE"
+            exit 1
+          fi
+          
+          echo "l8e-harbor admin setup completed successfully!"
+        env:
+        - name: KUBECONFIG
+          value: /tmp/kubeconfig
+        volumeMounts:
+        - name: kubeconfig
+          mountPath: /tmp
+          readOnly: true
+      volumes:
+      - name: kubeconfig
+        emptyDir: {}
+  backoffLimit: 3
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: l8e-harbor-admin-setup
+  namespace: {{ .Values.namespace | default "l8e-harbor" }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "0"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: l8e-harbor-admin-setup
+  namespace: {{ .Values.namespace | default "l8e-harbor" }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "0"
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["create", "get", "update", "patch"]
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["get", "patch", "update"]
+- apiGroups: ["apps"]
+  resources: ["deployments/status"]
+  verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: l8e-harbor-admin-setup
+  namespace: {{ .Values.namespace | default "l8e-harbor" }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "0"
+subjects:
+- kind: ServiceAccount
+  name: l8e-harbor-admin-setup
+  namespace: {{ .Values.namespace | default "l8e-harbor" }}
+roleRef:
+  kind: Role
+  name: l8e-harbor-admin-setup
+  apiGroup: rbac.authorization.k8s.io

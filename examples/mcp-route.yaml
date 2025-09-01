@@ -1,0 +1,37 @@
+apiVersion: harbor.l8e/v1
+kind: Route
+metadata:
+  name: calculator-mcp
+spec:
+  id: calculator-mcp
+  description: "Calculator MCP service route"
+  path: /mcp
+  methods: ["POST", "OPTIONS"]
+  backends:
+    - url: http://localhost:3001
+      weight: 100
+      health_check:
+        path: /health
+        interval_seconds: 30
+        timeout_seconds: 5
+        healthy_threshold: 2
+        unhealthy_threshold: 3
+  priority: 100
+  timeout_ms: 10000
+  
+  # Middleware stack
+  middleware:
+    - name: cors
+      config:
+        allow_origins: ["*"]
+        allow_methods: ["GET", "POST", "OPTIONS"]
+        allow_headers: ["*"]
+        
+    - name: logging
+      config:
+        log_level: INFO
+        log_requests: true
+        
+    - name: metrics
+      config:
+        backend: prometheus

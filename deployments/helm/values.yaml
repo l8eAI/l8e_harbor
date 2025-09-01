@@ -1,0 +1,194 @@
+# Default values for l8e-harbor
+# This is a YAML-formatted file.
+
+replicaCount: 3
+
+image:
+  repository: l8e-harbor
+  pullPolicy: IfNotPresent
+  # Overrides the image tag whose default is the chart appVersion.
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  name: ""
+
+podAnnotations: {}
+
+podSecurityContext:
+  fsGroup: 1001
+  runAsNonRoot: true
+  runAsUser: 1001
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+    - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1001
+
+service:
+  type: ClusterIP
+  port: 443
+  targetPort: 8443
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: l8e-harbor.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources:
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+  requests:
+    cpu: 250m
+    memory: 512Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+# l8e-harbor specific configuration
+config:
+  mode: "k8s"
+  secretProvider: "kubernetes"
+  routeStore: "configmap"
+  authAdapter: "k8s_sa"
+  logLevel: "INFO"
+  enableMetrics: true
+  enableTracing: false
+
+# Admin user configuration
+admin:
+  # Enable automatic admin user creation
+  autoCreate: true
+  # Admin username (default: admin)
+  username: "admin"
+  # Admin password (leave empty for auto-generation)
+  password: ""
+  # Admin role
+  role: "harbor-master"
+  # Store credentials in secret
+  credentialsSecret:
+    name: "l8e-harbor-admin-creds"
+    create: true
+
+# JWT configuration
+jwt:
+  # Enable automatic JWT key generation
+  autoGenerate: true
+  # JWT keys secret name
+  secretName: "l8e-harbor-jwt-keys"
+  # Existing keys (base64 encoded PEM format)
+  privateKey: ""
+  publicKey: ""
+  # JWT settings
+  issuer: "l8e-harbor"
+  audience: ["l8e-harbor-api", "l8e-harbor-ui"]
+  expiresIn: 3600
+
+# TLS configuration
+tls:
+  enabled: true
+  # Set to true to generate self-signed certificates
+  generate: true
+  # Or provide existing secret name
+  secretName: ""
+  # Certificate and key data (base64 encoded)
+  cert: ""
+  key: ""
+
+# ServiceMonitor for Prometheus
+serviceMonitor:
+  enabled: false
+  interval: 30s
+  path: /metrics
+  labels: {}
+
+# Initial routes configuration
+routes:
+  # Example route
+  - id: example-api
+    path: /api/v1
+    backends:
+      - url: http://example-service:8080
+    methods: ["GET", "POST", "PUT", "DELETE"]
+    middleware:
+      - name: logging
+        config:
+          level: info
+
+# RBAC configuration
+rbac:
+  create: true
+  # Permissions for l8e-harbor ServiceAccount
+  rules:
+    - apiGroups: [""]
+      resources: ["secrets", "configmaps"]
+      verbs: ["get", "list", "watch", "create", "update", "patch"]
+
+# Pod disruption budget
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# Health check configuration
+healthCheck:
+  liveness:
+    path: /healthz
+    initialDelaySeconds: 30
+    periodSeconds: 10
+  readiness:
+    path: /readyz
+    initialDelaySeconds: 5
+    periodSeconds: 5
+
+# Admin setup job configuration
+adminSetup:
+  # Enable admin setup job
+  enabled: true
+  # Job image (defaults to main l8e-harbor image)
+  image:
+    repository: ""
+    tag: ""
+    pullPolicy: IfNotPresent
+  # Job resources
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+  # Job timeout
+  activeDeadlineSeconds: 600
+  # Restart policy
+  restartPolicy: Never
+  # Backoff limit
+  backoffLimit: 3

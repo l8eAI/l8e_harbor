@@ -1,0 +1,37 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+docs/
+
+# Virtual Environments & Environment Variables
+# Never commit secrets or environment-specific files
+.env
+.venv
+env/
+venv/
+.claude/
+data/
+
+# Project-specific / Data
+# Ignore large files like datasets or trained models
+model/
+
+# IDEs and editors
+.idea/
+.vscode/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# OS-generated files
+.DS_Store
+Thumbs.db

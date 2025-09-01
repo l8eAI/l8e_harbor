@@ -1,0 +1,79 @@
+version: '3.8'
+
+services:
+  # Calculator MCP Service
+  calculator-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: calculator-mcp
+    ports:
+      - "3001:3000"  # Expose for direct access (optional)
+    environment:
+      - LOG_LEVEL=INFO
+      - PORT=3000
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - l8e-network
+    restart: unless-stopped
+
+  # l8e-harbor proxy
+  l8e-harbor:
+    image: l8e-harbor:latest
+    container_name: l8e-harbor
+    ports:
+      - "18443:8443"  # HTTPS management API
+      - "18080:8080"  # HTTP proxy
+    volumes:
+      - ./harbor-config.yaml:/etc/l8e-harbor/config.yaml:ro
+      - ./tls:/etc/l8e-harbor/tls:ro
+      - harbor-data:/etc/l8e-harbor/data
+    environment:
+      - L8E_LOG_LEVEL=INFO
+      - L8E_CONFIG_FILE=/etc/l8e-harbor/config.yaml
+    depends_on:
+      calculator-mcp:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-k", "-f", "https://localhost:8443/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - l8e-network
+    restart: unless-stopped
+
+  # Prometheus for metrics collection (optional)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - l8e-network
+    restart: unless-stopped
+
+volumes:
+  harbor-data:
+    driver: local
+  prometheus-data:
+    driver: local
+
+networks:
+  l8e-network:
+    driver: bridge
+    name: l8e-network

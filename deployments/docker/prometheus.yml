@@ -1,0 +1,13 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'l8e-harbor'
+    static_configs:
+      - targets: ['l8e-harbor:9090']
+    scheme: https
+    tls_config:
+      insecure_skip_verify: true
+    scrape_interval: 30s
+    metrics_path: /metrics

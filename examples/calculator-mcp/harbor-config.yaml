@@ -1,0 +1,108 @@
+# l8e-harbor configuration for Calculator MCP example
+mode: vm
+server:
+  host: 0.0.0.0
+  port: 8443
+  proxy_port: 8080
+
+# TLS configuration (self-signed for demo)
+tls:
+  cert_file: /etc/l8e-harbor/tls/tls.crt
+  key_file: /etc/l8e-harbor/tls/tls.key
+  auto_cert: true  # Generate self-signed cert if files don't exist
+
+# Storage and authentication
+secret_provider: localfs
+secret_path: /etc/l8e-harbor/data/secrets
+route_store: sqlite
+database_path: /etc/l8e-harbor/data/routes.db
+auth_adapter: local
+
+# Logging and observability
+log_level: INFO
+enable_metrics: true
+enable_tracing: false
+structured_logging: true
+
+# Default admin user (auto-created)
+admin:
+  username: admin
+  auto_generate_password: true
+
+# Routes configuration
+routes:
+  - id: calculator-mcp
+    description: "Calculator MCP service with full observability"
+    path: /mcp
+    methods: ["POST", "OPTIONS"]
+    backends:
+      - url: http://calculator-mcp:3000
+        weight: 100
+        health_check:
+          path: /health
+          interval_seconds: 30
+          timeout_seconds: 5
+          healthy_threshold: 2
+          unhealthy_threshold: 3
+    priority: 100
+    timeout_ms: 10000
+    
+    # Retry policy for resilience
+    retry_policy:
+      max_retries: 2
+      backoff_ms: 500
+      retry_on: ["5xx", "timeout", "connection_error"]
+    
+    # Circuit breaker for reliability
+    circuit_breaker:
+      enabled: true
+      failure_threshold: 50  # 50% failure rate
+      minimum_requests: 10
+      timeout_seconds: 60
+    
+    # Middleware stack
+    middleware:
+      - name: cors
+        config:
+          allow_origins: ["*"]
+          allow_methods: ["GET", "POST", "OPTIONS"]
+          allow_headers: ["*"]
+          
+      - name: logging
+        config:
+          log_level: INFO
+          log_requests: true
+          log_responses: false  # Don't log response bodies for privacy
+          log_headers: false
+          
+      - name: metrics
+        config:
+          backend: prometheus
+          track_request_size: true
+          track_response_size: true
+          
+      - name: rate_limit
+        config:
+          requests_per_minute: 100
+          burst: 20
+          
+      - name: header_rewrite
+        config:
+          set:
+            X-Service-Name: "calculator-mcp"
+            X-Proxied-By: "l8e-harbor"
+          remove: ["X-Debug", "X-Internal"]
+
+  # Health check endpoint (no auth required)
+  - id: health-check
+    description: "Public health check endpoint"
+    path: /health
+    methods: ["GET"]
+    backends:
+      - url: http://calculator-mcp:3000
+        weight: 100
+    middleware:
+      - name: logging
+        config:
+          log_level: DEBUG
+      - name: metrics

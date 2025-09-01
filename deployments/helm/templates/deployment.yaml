@@ -1,0 +1,118 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "l8e-harbor.fullname" . }}
+  labels:
+    {{- include "l8e-harbor.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "l8e-harbor.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "l8e-harbor.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "l8e-harbor.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: https
+              containerPort: 8443
+              protocol: TCP
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
+          env:
+            - name: HARBOR_MODE
+              value: {{ .Values.config.mode | quote }}
+            - name: HARBOR_SECRET_PROVIDER
+              value: {{ .Values.config.secretProvider | quote }}
+            - name: HARBOR_ROUTE_STORE
+              value: {{ .Values.config.routeStore | quote }}
+            - name: HARBOR_AUTH_ADAPTER
+              value: {{ .Values.config.authAdapter | quote }}
+            - name: HARBOR_LOG_LEVEL
+              value: {{ .Values.config.logLevel | quote }}
+            - name: HARBOR_ENABLE_METRICS
+              value: {{ .Values.config.enableMetrics | quote }}
+            - name: HARBOR_ENABLE_TRACING
+              value: {{ .Values.config.enableTracing | quote }}
+            {{- if .Values.tls.enabled }}
+            - name: HARBOR_TLS_CERT_FILE
+              value: "/etc/tls/tls.crt"
+            - name: HARBOR_TLS_KEY_FILE
+              value: "/etc/tls/tls.key"
+            {{- end }}
+          volumeMounts:
+            {{- if .Values.tls.enabled }}
+            - name: tls
+              mountPath: /etc/tls
+              readOnly: true
+            {{- end }}
+            - name: config
+              mountPath: /etc/l8e-harbor
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+            - name: var-lib
+              mountPath: /var/lib/l8e-harbor
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.healthCheck.liveness.path }}
+              port: https
+              scheme: HTTPS
+            initialDelaySeconds: {{ .Values.healthCheck.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.healthCheck.liveness.periodSeconds }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.healthCheck.readiness.path }}
+              port: https
+              scheme: HTTPS
+            initialDelaySeconds: {{ .Values.healthCheck.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.healthCheck.readiness.periodSeconds }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        {{- if .Values.tls.enabled }}
+        - name: tls
+          secret:
+            secretName: {{ include "l8e-harbor.tlsSecretName" . }}
+        {{- end }}
+        - name: config
+          configMap:
+            name: {{ include "l8e-harbor.fullname" . }}-config
+        - name: tmp
+          emptyDir: {}
+        - name: var-lib
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

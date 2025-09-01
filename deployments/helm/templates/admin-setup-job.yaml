@@ -1,0 +1,276 @@
+{{- if .Values.adminSetup.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "l8e-harbor.fullname" . }}-admin-setup
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "l8e-harbor.labels" . | nindent 4 }}
+    app.kubernetes.io/component: admin-setup
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "1"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  {{- if .Values.adminSetup.activeDeadlineSeconds }}
+  activeDeadlineSeconds: {{ .Values.adminSetup.activeDeadlineSeconds }}
+  {{- end }}
+  backoffLimit: {{ .Values.adminSetup.backoffLimit | default 3 }}
+  template:
+    metadata:
+      name: {{ include "l8e-harbor.fullname" . }}-admin-setup
+      labels:
+        {{- include "l8e-harbor.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: admin-setup
+    spec:
+      restartPolicy: {{ .Values.adminSetup.restartPolicy | default "Never" }}
+      serviceAccountName: {{ include "l8e-harbor.fullname" . }}-admin-setup
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      initContainers:
+      - name: wait-for-api
+        image: curlimages/curl:latest
+        command:
+        - /bin/sh
+        - -c
+        - |
+          echo "Waiting for l8e-harbor API to be ready..."
+          API_URL="https://{{ include "l8e-harbor.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.targetPort }}"
+          until curl -k -f $API_URL/health; do
+            echo "API not ready, waiting 5 seconds..."
+            sleep 5
+          done
+          echo "API is ready!"
+        resources:
+          requests:
+            cpu: 10m
+            memory: 16Mi
+          limits:
+            cpu: 50m
+            memory: 64Mi
+      containers:
+      - name: admin-setup
+        image: {{ .Values.adminSetup.image.repository | default .Values.image.repository }}:{{ .Values.adminSetup.image.tag | default .Values.image.tag | default .Chart.AppVersion }}
+        imagePullPolicy: {{ .Values.adminSetup.image.pullPolicy | default .Values.image.pullPolicy }}
+        command:
+        - /bin/sh
+        - -c
+        - |
+          set -e
+          
+          echo "Starting l8e-harbor admin setup..."
+          
+          # Configuration
+          API_URL="https://{{ include "l8e-harbor.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.targetPort }}"
+          ADMIN_USERNAME="{{ .Values.admin.username | default "admin" }}"
+          {{- if .Values.admin.password }}
+          ADMIN_PASSWORD="{{ .Values.admin.password }}"
+          {{- else }}
+          # Generate secure admin password
+          ADMIN_PASSWORD=$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-25)
+          {{- end }}
+          
+          {{- if .Values.jwt.autoGenerate }}
+          # Generate JWT key pair
+          echo "Generating JWT key pair..."
+          JWT_PRIVATE_KEY=$(openssl genpkey -algorithm RSA -pkcs8 2>/dev/null | base64 -w 0)
+          JWT_PUBLIC_KEY=$(echo "$JWT_PRIVATE_KEY" | base64 -d | openssl pkey -pubout 2>/dev/null | base64 -w 0)
+          
+          # Create JWT keys secret
+          kubectl create secret generic {{ .Values.jwt.secretName | default "l8e-harbor-jwt-keys" }} \
+            --from-literal=private-key="$JWT_PRIVATE_KEY" \
+            --from-literal=public-key="$JWT_PUBLIC_KEY" \
+            --namespace={{ .Release.Namespace }} \
+            --dry-run=client -o yaml | kubectl apply -f -
+          
+          echo "✓ JWT keys generated and stored"
+          {{- else }}
+          echo "Using existing JWT keys"
+          {{- end }}
+          
+          # Wait for service restart with new keys (if generated)
+          {{- if .Values.jwt.autoGenerate }}
+          echo "Triggering service restart for JWT key pickup..."
+          kubectl patch deployment {{ include "l8e-harbor.fullname" . }} \
+            -n {{ .Release.Namespace }} \
+            -p '{"spec":{"template":{"metadata":{"annotations":{"kubectl.kubernetes.io/restartedAt":"'$(date +%s)'"}}}}}' || true
+          
+          kubectl rollout status deployment/{{ include "l8e-harbor.fullname" . }} \
+            -n {{ .Release.Namespace }} --timeout=120s || true
+          {{- end }}
+          
+          # Create admin user
+          echo "Creating admin user '$ADMIN_USERNAME'..."
+          
+          # Use bootstrap endpoint for initial admin creation
+          CREATE_RESPONSE=$(curl -k -s -X POST "$API_URL/api/v1/bootstrap" \
+            -H "Content-Type: application/json" \
+            -H "X-Admin-Init: true" \
+            -d "{
+              \"admin_username\": \"$ADMIN_USERNAME\",
+              \"admin_password\": \"$ADMIN_PASSWORD\",
+              \"admin_role\": \"{{ .Values.admin.role | default "harbor-master" }}\",
+              {{- if .Values.jwt.autoGenerate }}
+              \"jwt_private_key\": \"$JWT_PRIVATE_KEY\",
+              \"jwt_public_key\": \"$JWT_PUBLIC_KEY\",
+              {{- end }}
+              \"meta\": {
+                \"created_by\": \"helm-admin-setup\",
+                \"created_at\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",
+                \"namespace\": \"{{ .Release.Namespace }}\",
+                \"release\": \"{{ .Release.Name }}\"
+              }
+            }" --max-time 30) || CREATE_RESPONSE=""
+          
+          if [ -z "$CREATE_RESPONSE" ] || echo "$CREATE_RESPONSE" | grep -q "error"; then
+            echo "Bootstrap endpoint failed, trying direct user creation..."
+            # Try direct user creation endpoint
+            SA_TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+            CREATE_RESPONSE=$(curl -k -s -X POST "$API_URL/api/v1/admin/users" \
+              -H "Authorization: Bearer $SA_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "{
+                \"username\": \"$ADMIN_USERNAME\",
+                \"password\": \"$ADMIN_PASSWORD\",
+                \"role\": \"{{ .Values.admin.role | default "harbor-master" }}\",
+                \"meta\": {
+                  \"created_by\": \"helm-admin-setup\",
+                  \"created_at\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"
+                }
+              }" --max-time 30) || echo "Direct user creation also failed"
+          fi
+          
+          echo "Admin user creation response: $CREATE_RESPONSE"
+          
+          # Store admin credentials in secret
+          {{- if .Values.admin.credentialsSecret.create }}
+          echo "Storing admin credentials in secret..."
+          kubectl create secret generic {{ .Values.admin.credentialsSecret.name | default "l8e-harbor-admin-creds" }} \
+            --from-literal=username="$ADMIN_USERNAME" \
+            --from-literal=password="$ADMIN_PASSWORD" \
+            --from-literal=role="{{ .Values.admin.role | default "harbor-master" }}" \
+            --from-literal=api-url="$API_URL" \
+            {{- if .Values.ingress.enabled }}
+            --from-literal=ui-url="https://{{ (index .Values.ingress.hosts 0).host }}" \
+            {{- else }}
+            --from-literal=ui-url="http://localhost:3000" \
+            {{- end }}
+            --from-literal=created-at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --namespace={{ .Release.Namespace }} \
+            --dry-run=client -o yaml | kubectl apply -f -
+          {{- end }}
+          
+          # Validate admin access
+          echo "Validating admin access..."
+          sleep 5  # Give service time to process
+          
+          LOGIN_RESPONSE=$(curl -k -s -X POST "$API_URL/api/v1/auth/login" \
+            -H "Content-Type: application/json" \
+            -d "{\"username\": \"$ADMIN_USERNAME\", \"password\": \"$ADMIN_PASSWORD\"}" \
+            --max-time 30)
+          
+          if echo "$LOGIN_RESPONSE" | grep -q "access_token"; then
+            echo "✓ Admin user authentication successful"
+            
+            # Test basic API access
+            ACCESS_TOKEN=$(echo "$LOGIN_RESPONSE" | grep -o '"access_token":"[^"]*' | cut -d'"' -f4)
+            USER_INFO=$(curl -k -s -X GET "$API_URL/api/v1/user/me" \
+              -H "Authorization: Bearer $ACCESS_TOKEN" \
+              --max-time 15)
+            
+            if echo "$USER_INFO" | grep -q "$ADMIN_USERNAME"; then
+              echo "✓ Admin API access validated"
+            else
+              echo "⚠ Admin user created but API access test failed"
+            fi
+          else
+            echo "⚠ Admin user may have been created but authentication test failed"
+            echo "Login response: $LOGIN_RESPONSE"
+          fi
+          
+          echo ""
+          echo "=========================================="
+          echo "l8e-harbor Admin Setup Complete!"
+          echo "=========================================="
+          echo ""
+          echo "Admin Username: $ADMIN_USERNAME"
+          echo "Credentials stored in secret: {{ .Values.admin.credentialsSecret.name | default "l8e-harbor-admin-creds" }}"
+          echo ""
+          echo "To retrieve admin credentials:"
+          echo "kubectl get secret {{ .Values.admin.credentialsSecret.name | default "l8e-harbor-admin-creds" }} -n {{ .Release.Namespace }} -o jsonpath='{.data.password}' | base64 -d"
+          echo ""
+          {{- if .Values.ingress.enabled }}
+          echo "Admin login URL: https://{{ (index .Values.ingress.hosts 0).host }}"
+          {{- else }}
+          echo "Admin login URL: [Configure ingress or port-forward to access UI]"
+          {{- end }}
+          echo "=========================================="
+        env:
+        - name: KUBECONFIG
+          value: /tmp/kubeconfig
+        resources:
+          {{- toYaml .Values.adminSetup.resources | nindent 10 }}
+        volumeMounts:
+        - name: kubeconfig
+          mountPath: /tmp
+          readOnly: true
+        securityContext:
+          {{- toYaml .Values.securityContext | nindent 10 }}
+      volumes:
+      - name: kubeconfig
+        emptyDir: {}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "l8e-harbor.fullname" . }}-admin-setup
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "l8e-harbor.labels" . | nindent 4 }}
+    app.kubernetes.io/component: admin-setup
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "0"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "l8e-harbor.fullname" . }}-admin-setup
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "l8e-harbor.labels" . | nindent 4 }}
+    app.kubernetes.io/component: admin-setup
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "0"
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["create", "get", "update", "patch", "list"]
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["get", "patch", "update", "list"]
+- apiGroups: ["apps"]
+  resources: ["deployments/status"]
+  verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "l8e-harbor.fullname" . }}-admin-setup
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "l8e-harbor.labels" . | nindent 4 }}
+    app.kubernetes.io/component: admin-setup
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "0"
+subjects:
+- kind: ServiceAccount
+  name: {{ include "l8e-harbor.fullname" . }}-admin-setup
+  namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: Role
+  name: {{ include "l8e-harbor.fullname" . }}-admin-setup
+  apiGroup: rbac.authorization.k8s.io
+{{- end }}

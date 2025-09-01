@@ -1,0 +1,49 @@
+[tool.poetry]
+name = "l8e-harbor"
+version = "0.1.0"
+description = "The l8e-harbor AI Gateway"
+readme = "README.md"
+packages = [{include = "app"}]
+
+[tool.poetry.dependencies]
+python = "^3.9"
+fastapi = "^0.111.0"
+uvicorn = {extras = ["standard"], version = "^0.29.0"}
+pydantic = "^2.7.1"
+pydantic-settings = "^2.2.1"
+pyyaml = "^6.0.1"
+httpx = "^0.27.0"
+typer = "^0.12.0"
+bcrypt = "^4.1.0"
+pyjwt = {extras = ["crypto"], version = "^2.8.0"}
+cryptography = "^42.0.0"
+kubernetes = "^29.0.0"
+prometheus-client = "^0.20.0"
+opentelemetry-api = "^1.24.0"
+opentelemetry-sdk = "^1.24.0"
+opentelemetry-instrumentation-fastapi = "^0.45b0"
+opentelemetry-instrumentation-httpx = "^0.45b0"
+aiosqlite = "^0.20.0"
+python-multipart = "^0.0.9"
+starlette = "^0.37.0"
+rich = "^13.7.0"
+# Assuming l8e-beam is installed from a private repo or locally
+# For local development:
+# l8e-beam = {path = "../l8e_beam", develop = true}
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0.0"
+pytest-asyncio = "^0.23.0"
+pytest-cov = "^4.0.0"
+black = "^24.0.0"
+mypy = "^1.8.0"
+ruff = "^0.3.0"
+bandit = "^1.7.0"
+
+[tool.poetry.scripts]
+l8e-harbor = "app.main:main"
+harbor-ctl = "app.cli:main"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

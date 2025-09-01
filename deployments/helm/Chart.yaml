@@ -1,0 +1,15 @@
+apiVersion: v2
+name: l8e-harbor
+description: Open, Pluggable, Deployment-Agnostic AI Gateway
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - gateway
+  - proxy
+  - ai
+  - kubernetes
+home: https://github.com/example/l8e-harbor
+maintainers:
+  - name: l8e-harbor team
+    email: team@example.com

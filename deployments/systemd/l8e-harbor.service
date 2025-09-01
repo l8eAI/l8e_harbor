@@ -1,0 +1,51 @@
+[Unit]
+Description=l8e-harbor AI Gateway
+After=network.target
+Wants=network.target
+
+[Service]
+Type=exec
+User=l8e-harbor
+Group=l8e-harbor
+ExecStart=/usr/local/bin/l8e-harbor --config /etc/l8e-harbor/config.yaml
+Restart=on-failure
+RestartSec=5
+KillMode=mixed
+TimeoutStopSec=30
+
+# Security settings
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+MemoryDenyWriteExecute=yes
+LockPersonality=yes
+
+# File system access
+ReadWritePaths=/var/lib/l8e-harbor /var/log/l8e-harbor
+PrivateTmp=yes
+
+# Network
+PrivateUsers=yes
+ProtectHostname=yes
+
+# Capabilities
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+# Resource limits
+LimitNOFILE=65536
+MemoryHigh=1G
+MemoryMax=2G
+
+# Environment
+Environment=HARBOR_CONFIG_FILE=/etc/l8e-harbor/config.yaml
+Environment=HARBOR_LOG_LEVEL=INFO
+
+[Install]
+WantedBy=multi-user.target

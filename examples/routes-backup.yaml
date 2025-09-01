@@ -1,0 +1,52 @@
+apiVersion: harbor.l8e/v1
+items:
+- backends:
+  - health_check_path: /healthz
+    tls: null
+    url: http://localhost:3001/
+    weight: 100
+  circuit_breaker:
+    enabled: false
+    failure_threshold: 50
+    interval_ms: 60000
+    minimum_requests: 20
+    timeout_ms: 30000
+  created_at: '2025-09-01T18:00:45.767344'
+  description: Calculator MCP service route
+  id: calculator-mcp
+  matchers: null
+  methods:
+  - POST
+  - OPTIONS
+  middleware:
+  - config:
+      allow_headers:
+      - '*'
+      allow_methods:
+      - GET
+      - POST
+      - OPTIONS
+      allow_origins:
+      - '*'
+    name: cors
+  - config:
+      log_level: INFO
+      log_requests: true
+    name: logging
+  - config:
+      backend: prometheus
+    name: metrics
+  path: /mcp
+  priority: 100
+  retry_policy:
+    backoff_ms: 100
+    max_retries: 0
+    retry_on: []
+  sticky_session: false
+  strip_prefix: true
+  timeout_ms: 10000
+  updated_at: '2025-09-01T18:00:45.767650'
+kind: RouteList
+metadata:
+  exported_at: '2025-09-01T18:01:34.220453'
+  exported_by: admin

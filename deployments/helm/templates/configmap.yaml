@@ -1,0 +1,40 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "l8e-harbor.fullname" . }}-config
+  labels:
+    {{- include "l8e-harbor.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    mode: {{ .Values.config.mode }}
+    server:
+      host: 0.0.0.0
+      port: 8443
+    {{- if .Values.tls.enabled }}
+    tls:
+      cert_file: /etc/tls/tls.crt
+      key_file: /etc/tls/tls.key
+    {{- end }}
+    secret_provider: {{ .Values.config.secretProvider }}
+    route_store: {{ .Values.config.routeStore }}
+    auth_adapter: {{ .Values.config.authAdapter }}
+    log_level: {{ .Values.config.logLevel }}
+    enable_metrics: {{ .Values.config.enableMetrics }}
+    enable_tracing: {{ .Values.config.enableTracing }}
+  
+  {{- if .Values.routes }}
+  initial-routes.yaml: |
+    apiVersion: harbor.l8e/v1
+    kind: RouteList
+    metadata:
+      name: initial-routes
+    items:
+    {{- range .Values.routes }}
+      - apiVersion: harbor.l8e/v1
+        kind: Route
+        metadata:
+          name: {{ .id }}
+        spec:
+          {{- toYaml . | nindent 10 }}
+    {{- end }}
+  {{- end }}
